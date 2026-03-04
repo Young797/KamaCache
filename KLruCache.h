@@ -108,7 +108,8 @@ public:
             nodeMap_.erase(it);
         }
     }
-
+protected:
+    virtual void onEvict(const Key&) {}     // used for LRU-k
 private:
     void initializeList()
     {
@@ -168,8 +169,11 @@ private:
     void evictLeastRecent() 
     {
         NodePtr leastRecent = dummyHead_->next_;
+        Key deleted_key = leastRecent->getKey();
         removeNode(leastRecent);
         nodeMap_.erase(leastRecent->getKey());
+
+        onEvict(deleted_key); // for LRU-k 
     }
 
 private:
@@ -178,6 +182,85 @@ private:
     std::mutex    mutex_;
     NodePtr       dummyHead_; // 虚拟头结点
     NodePtr       dummyTail_;
+};
+
+// LRU优化：my version of LRU-k
+template<typename Key, typename Value>
+class my_LruK : public KLruCache<Key, Value>{
+public:
+    my_LruK(int total_capacity, int history_capacity, int k)
+        : KLruCache<Key, Value>(total_capacity-history_capacity) // for fair comparison
+        , history_list_(std::make_unique<KLruCache<Key, Value>>(history_capacity))
+        , k_(k)
+    {}
+    Value get(Key key)
+    {
+        std::lock_guard<std::mutex> lock(lruk_mutex_);
+        // 首先尝试从主缓存获取数据
+        Value value{};
+        bool inMainCache = KLruCache<Key, Value>::get(key, value);
+
+        // 如果数据在主缓存中，直接返回
+        if (inMainCache) return value;
+
+        bool inHistCache = history_list_->get(key, value);
+        if(inHistCache)
+        {
+            if(cntmap_.find(key) == cntmap_.end())
+            {
+                cntmap_[key] = 1;
+            }
+            else    cntmap_[key]++;
+            
+            // check access cnt
+            if(cntmap_[key] >= k_)
+            {
+                KLruCache<Key, Value>::put(key, value);
+                history_list_->remove(key);
+                cntmap_.erase(key);
+            }
+        }
+        return value;    
+    }
+    void put(Key key, Value value) 
+    {
+        std::lock_guard<std::mutex> lock(lruk_mutex_);
+
+        // 检查是否已在主缓存
+        Value existingValue{};
+        bool inMainCache = KLruCache<Key, Value>::get(key, existingValue);
+        
+        if (inMainCache) 
+        {
+            // 已在主缓存，直接更新
+            KLruCache<Key, Value>::put(key, value);
+            return;
+        }
+        history_list_->put(key, value);
+        if(cntmap_.find(key) == cntmap_.end())
+        {
+            cntmap_[key] = 1;
+        }
+        else    cntmap_[key]++;
+
+        if(cntmap_[key] >= k_)
+        {
+            KLruCache<Key, Value>::put(key, value);
+            history_list_->remove(key);
+            cntmap_.erase(key);
+        }
+    }
+protected:
+    void onEvict(const Key& key) override
+    {
+        // otherwise cntmap will keep record of evicted data
+        cntmap_.erase(key); 
+    }
+private:
+    std::mutex lruk_mutex_;
+    int k_;
+    std::unique_ptr<KLruCache<Key, Value>> history_list_; // same structure as LRUCache
+    std::unordered_map<Key, size_t> cntmap_;
 };
 
 // LRU优化：Lru-k版本。 通过继承的方式进行再优化
