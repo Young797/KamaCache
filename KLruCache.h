@@ -354,6 +354,7 @@ private:
     std::unordered_map<Key, Value>          historyValueMap_; // 存储未达到k次访问的数据值
 };
 
+// update: if parameter sliceNum = power of 2 -> use bit operation, not %
 // lru优化：对lru进行分片，提高高并发使用的性能
 template<typename Key, typename Value>
 class KHashLruCaches
@@ -361,8 +362,13 @@ class KHashLruCaches
 public:
     KHashLruCaches(size_t capacity, int sliceNum)
         : capacity_(capacity)
-        , sliceNum_(sliceNum > 0 ? sliceNum : std::thread::hardware_concurrency())
     {
+        // get nearest number of pow 2;
+        int tmp = sliceNum > 0 ? sliceNum : std::thread::hardware_concurrency();
+        sliceNum_ = 1;
+        while(sliceNum_<tmp && 2*sliceNum_<=tmp)  sliceNum_ = sliceNum_ << 1;
+        mask_ = sliceNum_ - 1;
+
         size_t sliceSize = std::ceil(capacity / static_cast<double>(sliceNum_)); // 获取每个分片的大小
         for (int i = 0; i < sliceNum_; ++i)
         {
@@ -373,28 +379,31 @@ public:
     void put(Key key, Value value)
     {
         // 获取key的hash值，并计算出对应的分片索引
-        size_t sliceIndex = Hash(key) % sliceNum_;
+        // size_t sliceIndex = Hash(key) % sliceNum_;
+        size_t sliceIndex = Hash(key) & mask_;
         lruSliceCaches_[sliceIndex]->put(key, value);
     }
 
     bool get(Key key, Value& value)
     {
         // 获取key的hash值，并计算出对应的分片索引
-        size_t sliceIndex = Hash(key) % sliceNum_;
+        // size_t sliceIndex = Hash(key) % sliceNum_;
+        size_t sliceIndex = Hash(key) & mask_;
         return lruSliceCaches_[sliceIndex]->get(key, value);
     }
 
     Value get(Key key)
     {
-        Value value;
-        memset(&value, 0, sizeof(value));
+        Value value{};
+        // memset only applies to simple type
+        // memset(&value, 0, sizeof(value));
         get(key, value);
         return value;
     }
 
 private:
     // 将key转换为对应hash值
-    size_t Hash(Key key)
+    const size_t Hash(const Key &key)
     {
         std::hash<Key> hashFunc;
         return hashFunc(key);
@@ -404,6 +413,8 @@ private:
     size_t                                              capacity_;  // 总容量
     int                                                 sliceNum_;  // 切片数量
     std::vector<std::unique_ptr<KLruCache<Key, Value>>> lruSliceCaches_; // 切片LRU缓存
+
+    size_t                                              mask_; // used for % op
 };
 
 } // namespace KamaCache
