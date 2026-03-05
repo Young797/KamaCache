@@ -52,7 +52,7 @@ public:
       return head_->next == tail_;
     }
 
-    // 提那家结点管理方法
+    // 添加结点管理方法
     void addNode(NodePtr node) 
     {
         if (!node || !head_ || !tail_) 
@@ -138,11 +138,11 @@ public:
     }
 
       // 清空缓存,回收资源
-    void purge()
-    {
-      nodeMap_.clear();
-      freqToFreqList_.clear();
-    }
+    // void purge()
+    // {
+    //   nodeMap_.clear();
+    //   freqToFreqList_.clear();
+    // }
 
 private:
     void putInternal(Key key, Value value); // 添加缓存
@@ -166,7 +166,7 @@ private:
     int                                            curTotalNum_; // 当前访问所有缓存次数总数 
     std::mutex                                     mutex_; // 互斥锁
     NodeMap                                        nodeMap_; // key 到 缓存节点的映射
-    std::unordered_map<int, FreqList<Key, Value>*> freqToFreqList_;// 访问频次到该频次链表的映射
+    std::unordered_map<int, std::unique_ptr<FreqList<Key, Value>>> freqToFreqList_;// 访问频次到该频次链表的映射
 };
 
 template<typename Key, typename Value>
@@ -238,7 +238,9 @@ void KLfuCache<Key, Value>::addToFreqList(NodePtr node)
     if (freqToFreqList_.find(node->freq) == freqToFreqList_.end())
     {
         // 不存在则创建
-        freqToFreqList_[node->freq] = new FreqList<Key, Value>(node->freq);
+        // freqToFreqList_[node->freq] = new FreqList<Key, Value>(node->freq);
+        // unique_ptr version
+        freqToFreqList_[node->freq] = std::make_unique<FreqList<Key, Value>>(node->freq);
     }
 
     freqToFreqList_[freq]->addNode(node);
@@ -268,6 +270,8 @@ void KLfuCache<Key, Value>::decreaseFreqNum(int num)
         curAverageNum_ = 0;
     else
         curAverageNum_ = curTotalNum_ / nodeMap_.size();
+    // no need to call handleOverMaxAverageNum()
+    // not strcit but acceptable since it is slow O(n)
 }
 
 template<typename Key, typename Value>
@@ -306,6 +310,7 @@ void KLfuCache<Key, Value>::handleOverMaxAverageNum()
 
     // 更新最小频率
     updateMinFreq();
+    curAverageNum_ = curTotalNum_ / nodeMap_.size();
 }
 
 template<typename Key, typename Value>
