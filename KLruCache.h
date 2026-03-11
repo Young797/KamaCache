@@ -372,7 +372,8 @@ public:
         size_t sliceSize = std::ceil(capacity / static_cast<double>(sliceNum_)); // 获取每个分片的大小
         for (int i = 0; i < sliceNum_; ++i)
         {
-            lruSliceCaches_.emplace_back(new KLruCache<Key, Value>(sliceSize)); 
+            lruSliceCaches_.emplace_back(
+                std::make_unique<KLruCache<Key, Value>>(sliceSize)); 
         }
     }
 
@@ -403,7 +404,7 @@ public:
 
 private:
     // 将key转换为对应hash值
-    const size_t Hash(const Key &key)
+    size_t Hash(const Key &key) const
     {
         std::hash<Key> hashFunc;
         return hashFunc(key);
